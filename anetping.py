@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 packet = icmp.build()
 
+
 async def ping(ip):
     # get socket
     # set socket non block
@@ -24,11 +25,11 @@ async def ping(ip):
         #asyncio.StreamWriter.write(packet)
         logger.info("socket created")
         packet = icmp.build()
-        await send(sock, ip, packet)
+        await send_wrap(sock, ip, packet)
         delay = await receive(sock, timeout)
         sock.close()
 
-        return True
+        return delay
 
     except Exception as e:
         logger.error(f'{str(e)}')
@@ -37,30 +38,41 @@ async def ping(ip):
 ICMP_MAX_RECV = 1518
 ICMP_ECHO_REPLY = 0x00
 
+import time
+
+
 async def receive(sock, timeout):
     loop = asyncio.get_event_loop()
 
     try:
+        t1 = time.time()
         while True:
+
             rec_packet = await loop.sock_recv(sock, 1024)
             # time_received = default_timer()
-            if loop.family == socket.AddressFamily.AF_INET:
-                offset = 20
-            else:
-                offset = 0
-
-            icmp_header = rec_packet[offset:offset + 8]
+            # if loop.family == socket.AddressFamily.AF_INET:
+            #     offset = 20
+            # else:
+            #     offset = 0
+            icmp_offset = 20
+            icmp_header = rec_packet[icmp_offset:icmp_offset + 8]
 
             type, code, checksum, packet_id, sequence = struct.unpack(
                 "bbHHh", icmp_header
             )
 
             if type != ICMP_ECHO_REPLY:
+                t2 = time.time()
+                td = int((t2 - t1) * 1000)
+                if td > 3000:
+                    return False
+                await asyncio.sleep(0)
                 continue
+
 
             # if packet_id == id_:
             # data = rec_packet[offset + 8:offset + 8 + struct.calcsize("d")]
-            return True
+            return rec_packet
     except Exception as e:
         return False
 
@@ -69,8 +81,27 @@ async def receive(sock, timeout):
     # self.queue = asyncio.Queue(loop=self.loop)
 
 
-async def send(socket, dest, packet):
-    socket.sendto(packet, (dest, 0))
+def send(sock, dest, future, packet):
+    try:
+        sock.sendto(packet, dest)
+
+    except Exception as e:
+        logger.error(f'{str(e)}')
+    finally:
+        asyncio.get_event_loop().remove_writer(sock)
+        future.set_result(None)
+
+import functools
+async def send_wrap(sock, dest, packet):
+    try:
+        info = await asyncio.get_event_loop().getaddrinfo(dest, 0)
+        future = asyncio.get_event_loop().create_future()
+        callback = functools.partial(send, sock, info[2][4], future, packet)
+        asyncio.get_event_loop().add_writer(sock, callback)
+        await future
+    except Exception as e:
+        logger.error(f'{str(e)}')
+        return False
 
 
 async def create_connection() -> Optional[socket.socket]:

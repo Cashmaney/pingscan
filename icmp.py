@@ -41,6 +41,7 @@ def build() -> bytes:
     msg = type + code + csum + msg_id + seq + data
 
     csum = checksum(msg)
-    header = struct.pack('!BBHHH', 8, 0, csum, 1, 1)
+    header = struct.pack('bbH', 8, 0, csum)
+    header = header + bytes(msg_id.encode()) + bytes(seq.encode())
     packet = header + bytes(data.encode())
     return packet
