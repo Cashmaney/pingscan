@@ -14,12 +14,36 @@ def two_byte_add(a, b):
     return (c & 0xffff) + (c >> 16)
 
 
-def checksum(msg):
-    s = 0
-    for i in range(0, len(msg), 2):
-        w = ord(msg[i]) + (ord(msg[i+1]) << 8)
-        s = two_byte_add(s, w)
-    return ~s & 0xffff
+def checksum(buffer):
+    """
+    I'm not too confident that this is right but testing seems
+    to suggest that it gives the same answers as in_cksum in ping.c
+    :param buffer:
+    :return:
+    """
+    sum = 0
+    count_to = (len(buffer) / 2) * 2
+    count = 0
+
+    while count < count_to:
+        this_val = buffer[count + 1] * 256 + buffer[count]
+        sum += this_val
+        sum &= 0xffffffff # Necessary?
+        count += 2
+
+    if count_to < len(buffer):
+        sum += buffer[len(buffer) - 1]
+        sum &= 0xffffffff # Necessary?
+
+    sum = (sum >> 16) + (sum & 0xffff)
+    sum += sum >> 16
+    answer = ~sum
+    answer &= 0xffff
+
+    # Swap bytes. Bugger me if I know why.
+    # answer = answer >> 8 | (answer << 8 & 0xff00)
+
+    return answer
 
 
 def parse(packet: bytes) -> ICMPHeader:
@@ -27,21 +51,21 @@ def parse(packet: bytes) -> ICMPHeader:
     type, code, checksum, p_id, sequence = struct.unpack('bbHHh', icmp_header)
     return ICMPHeader(type, code, checksum)
 
+def stoi(s):
+    return int(s.hex(), 16)
 
-def build() -> bytes:
-    global seq
+import codecs
+def build(seq=1, msg_id=1) -> bytes:
+    mtype = 8
+    code = 0
+    csum = 0
+    #msg_id = (msg_id).to_bytes(2, byteorder='little')
+    #seq = (seq).to_bytes(2, byteorder='little')
+    data = bytes('abcdefghijklmnopqrstuvwabcdefg'.encode())
+    msg = struct.pack('BbHHh', mtype, code, csum, msg_id, seq)
 
-    type = '\x08'
-    code = '\x00'
-    csum = '\x00\x00'
-    msg_id = '\x00\x01'
-    seq = '\x00\x01'#bytes(seq + 1 % 65536)
-    data = 'abcdefghijklmnopqrstuvwabcdefg'
+    csum = checksum(msg + data)
 
-    msg = type + code + csum + msg_id + seq + data
-
-    csum = checksum(msg)
-    header = struct.pack('bbH', 8, 0, csum)
-    header = header + bytes(msg_id.encode()) + bytes(seq.encode())
-    packet = header + bytes(data.encode())
+    header = struct.pack('BbHHh', mtype, code, csum, msg_id, seq)
+    packet = header + data
     return packet
