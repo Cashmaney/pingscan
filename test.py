@@ -7,7 +7,7 @@ from icmp import build
 
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 
 def test_ip_mask_to_list():
@@ -25,7 +25,7 @@ def test_ping():
 def test_sync_ping():
     asyncio.set_event_loop(asyncio.new_event_loop())
     loop = asyncio.get_event_loop()
-    addrs = ping_network('10.0.0.0', '255.255.255.0', 1)
+    addrs = ping_network('8.8.8.0', '255.255.255.0', 3)
     print(f"{len(addrs)} addresses: {addrs}")
     loop.close()
 
