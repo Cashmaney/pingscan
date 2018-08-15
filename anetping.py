@@ -6,7 +6,7 @@ import logging
 import struct
 import fcntl
 import icmp
-
+import time
 from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -22,22 +22,26 @@ def ping_network(ip, netmask, timeout):
     result = loop.run_until_complete(asyncio.gather(*tasks))
     return list(set([str(addr) for addr in result if addr is not None]))
 
+
 async def ping(ip, timeout=3):
     global seq
     # get socket
     # set socket non block
     # queue writer
-    # queue reader?
-    packet = icmp.build(seq, sender_id)
+    # queue reader?\
     seq = seq + 1
+    pkt_seq = seq
+    packet = icmp.build(pkt_seq, sender_id)
+
     info = await asyncio.get_event_loop().getaddrinfo(ip, 0)
     sock = socket.socket(family=socket.AF_INET,
                          type=socket.SOCK_RAW,
                          proto=socket.IPPROTO_ICMP)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.setblocking(False)
     try:
         await async_sender(sock, info, packet)
-        result = await receive(sock, sender_id, timeout)
+        result = await receive(sock, pkt_seq, timeout)
         if result:
             return ipaddress.IPv4Address(result)
         else:
@@ -55,27 +59,39 @@ ICMP_ECHO_REPLY = 0
 ICMP_MAX_SIZE = 1500
 ICMP_OFFSET = 20
 SRC_IP_OFFSET = 12
-import time
+
+ICMP_NETWORK_UNREACH = 3
+
+#def check_recv_match(pa):
 
 
-async def receive(sock, sender_id, timeout):
+async def receive(sock, pkt_seq, timeout):
     loop = asyncio.get_event_loop()
-    #recv_packet = bytearray()
+    # recv_packet = bytearray()
     try:
         t1 = time.time()
         while True:
-            recv_packet = await loop.sock_recv(sock, ICMP_MAX_SIZE)
-
-            icmp_header = recv_packet[ICMP_OFFSET:ICMP_OFFSET + 8]
+            recv_packet = await loop.sock_recv(sock, 1024)
+            offset = ICMP_OFFSET
+            icmp_header = recv_packet[offset:offset + 8]
 
             type, code, checksum, packet_id, sequence = struct.unpack(
                 "bbHHh", icmp_header
             )
 
             if type == ICMP_ECHO_REPLY:
-                if sender_id == packet_id:
+                if pkt_seq == sequence:
+                    logger.info(f"received: response from ip: {str(ipaddress.IPv4Address(recv_packet[SRC_IP_OFFSET:SRC_IP_OFFSET + 4]))}")
                     return recv_packet[SRC_IP_OFFSET:SRC_IP_OFFSET + 4]
+            if type == ICMP_NETWORK_UNREACH:
+                offset = offset + ICMP_OFFSET + 8
+                icmp_header = recv_packet[offset:offset + 8]
 
+                type, code, checksum, packet_id, sequence = struct.unpack(
+                    "bbHHh", icmp_header
+                )
+                if sender_id == packet_id:
+                    return False
             t2 = time.time()
             td = int((t2 - t1) * 1000)
             if td > timeout * 1000:
@@ -103,6 +119,7 @@ def send(sock, dest, packet):
 async def async_sender(sock, info, packet):
     try:
         asyncio.get_event_loop().call_soon_threadsafe(send, sock, info[2][4], packet)
+        #send(sock, info[2][4], packet)
     except Exception as e:
         logger.error(f'send_wrap::{str(e)}')
         return False
