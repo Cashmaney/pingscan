@@ -2,12 +2,20 @@ import pytest
 
 import asyncio
 
-from anetping import *
+from utils import *
+from aio_ping_scan import *
 from icmp import build
-
+from functools import reduce
 import logging
 
 logging.basicConfig(level=logging.INFO)
+
+@pytest.fixture(scope='module')
+def loop():
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    loop = asyncio.get_event_loop()
+    yield loop
+    loop.close()
 
 
 def test_ip_mask_to_list():
@@ -16,20 +24,24 @@ def test_ip_mask_to_list():
     assert addrs == expected_addrs
 
 
-def test_ping():
-    active = netping('192.168.1.0', '255.255.255.0')
-    print(active)
-    assert active is None
+def test_split_netmask():
+    addrs = split_networks('192.168.1.0', '255.255.255.0', 4)
+    expected_addrs = [('192.168.1.0','255.255.255.192'),
+                      ('192.168.1.64', '255.255.255.192'),
+                      ('192.168.1.128', '255.255.255.192'),
+                      ('192.168.1.192', '255.255.255.192')]
+    assert addrs == expected_addrs
 
+def test_build_icmp():
+    result = build(2, 1)
+    expected = b'\x08\x00\xf9\xff\x01\x00\x02\x00abcdefghij'
+    assert(str(result) == str(expected))
 
-def test_sync_ping():
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    loop = asyncio.get_event_loop()
+def test_async_ping_multi_process(loop):
+    result = mp_ping_network('8.8.8.0', '255.255.255.0', 3)
+    cnt = reduce(lambda x,y: x + y, map(len, result))
+    print(f"{cnt} addresses: {result}")
+
+def test_async_ping_single_process(loop):
     addrs = ping_network('8.8.8.0', '255.255.255.0', 3)
     print(f"{len(addrs)} addresses: {addrs}")
-    loop.close()
-
-async def ping_test(ip):
-    return await ping(ip)
-
-    #assert False

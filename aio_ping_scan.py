@@ -1,22 +1,53 @@
 import socket
-import os
 import ipaddress
 import asyncio
 import logging
 import struct
-import fcntl
-import icmp
 import time
-from typing import Optional, Tuple
-
+from concurrent.futures import ProcessPoolExecutor
+from utils import split_networks, ip_mask_to_list
+from icmp import build
 logger = logging.getLogger(__name__)
 
 sender_id = 1
 seq = 1
 
+ICMP_MAX_RECV = 1518
+ICMP_ECHO_REPLY = 0
+ICMP_MAX_SIZE = 1500
+ICMP_OFFSET = 20
+SRC_IP_OFFSET = 12
+
+ICMP_NETWORK_UNREACH = 3
+
+
+def mp_ping_network(ip, netmask, timeout, processes=4):
+    """
+
+    :param ip:
+    :param netmask:
+    :param timeout:
+    :param processes:
+    :return:
+    """
+    networks = split_networks(ip, netmask, processes)
+
+    loop = asyncio.get_event_loop()
+    executor = ProcessPoolExecutor(max_workers=processes)
+    tasks = [loop.run_in_executor(executor, ping_network, network[0], network[1], timeout) for network in networks]
+
+    return loop.run_until_complete(asyncio.gather(*tasks))
+
 
 def ping_network(ip, netmask, timeout):
-    tasks = []
+    """
+
+    :param ip:
+    :param netmask:
+    :param timeout:
+    :return:
+    """
+    result = []
     loop = asyncio.get_event_loop()
     tasks = [asyncio.ensure_future(ping(addr, timeout)) for addr in ip_mask_to_list(ip, netmask)]
     result = loop.run_until_complete(asyncio.gather(*tasks))
@@ -24,14 +55,18 @@ def ping_network(ip, netmask, timeout):
 
 
 async def ping(ip, timeout=3):
+    """
+
+    :param ip:
+    :param timeout:
+    :return:
+    """
     global seq
-    # get socket
-    # set socket non block
-    # queue writer
-    # queue reader?\
+
     seq = (seq + 1) % 30000
     pkt_seq = seq
-    packet = icmp.build(pkt_seq, sender_id)
+
+    packet = build(pkt_seq, sender_id)
 
     info = await asyncio.get_event_loop().getaddrinfo(ip, 0)
     sock = socket.socket(family=socket.AF_INET,
@@ -54,20 +89,10 @@ async def ping(ip, timeout=3):
         if sock:
             sock.close()
 
-ICMP_MAX_RECV = 1518
-ICMP_ECHO_REPLY = 0
-ICMP_MAX_SIZE = 1500
-ICMP_OFFSET = 20
-SRC_IP_OFFSET = 12
-
-ICMP_NETWORK_UNREACH = 3
-
-#def check_recv_match(pa):
-
 
 async def receive(sock, pkt_seq, timeout, ip):
     loop = asyncio.get_event_loop()
-    # recv_packet = bytearray()
+
     try:
         t1 = time.time()
         while True:
@@ -81,20 +106,10 @@ async def receive(sock, pkt_seq, timeout, ip):
 
             if type == ICMP_ECHO_REPLY:
                 resp_ip = recv_packet[SRC_IP_OFFSET:SRC_IP_OFFSET + 4]
-                # if pkt_seq == sequence:
-                #     logger.info(f"received: response from ip: {str(ipaddress.IPv4Address(recv_packet[SRC_IP_OFFSET:SRC_IP_OFFSET + 4]))}")
-                #     return recv_packet[SRC_IP_OFFSET:SRC_IP_OFFSET + 4]
+
                 if ipaddress.IPv4Address(resp_ip) == ipaddress.IPv4Address(ip):
                     return ipaddress.IPv4Address(ip)
-            # if type == ICMP_NETWORK_UNREACH:
-            #     offset = offset + ICMP_OFFSET + 8
-            #     icmp_header = recv_packet[offset:offset + 8]
-            #
-            #     type, code, checksum, packet_id, sequence = struct.unpack(
-            #         "bbHHh", icmp_header
-            #     )
-            #     if sender_id == packet_id:
-            #         return False
+
             t2 = time.time()
             td = int((t2 - t1) * 1000)
             if td > timeout * 1000:
@@ -107,10 +122,6 @@ async def receive(sock, pkt_seq, timeout, ip):
         logger.error(f'{str(e)}')
         return False
 
-    # self.queue.put_nowait((timeReceived, (dataSize + 8), iphSrcIP, \
-    #                         icmpSeqNumber, iphTTL))
-    # self.queue = asyncio.Queue(loop=self.loop)
-
 
 def send(sock, dest, packet):
     try:
@@ -122,18 +133,6 @@ def send(sock, dest, packet):
 async def async_sender(sock, info, packet):
     try:
         asyncio.get_event_loop().call_soon_threadsafe(send, sock, info[2][4], packet)
-        #send(sock, info[2][4], packet)
     except Exception as e:
         logger.error(f'send_wrap::{str(e)}')
         return False
-
-def ip_mask_to_list(ip, netmask):
-    """ return list of string ip addresses in ip/netmask (including network names and broadcasts) """
-    # todo: turn this into a generator
-    net = ipaddress.IPv4Network(f'{ip}/{netmask}')
-    return [str(addr) for addr in net if addr != net.network_address and addr != net.broadcast_address]
-
-
-def netping(ip, netmask):
-    addrs=ip_mask_to_list(ip,netmask)
-    #[print(addr) for addr in addrs]
