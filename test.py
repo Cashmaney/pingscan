@@ -8,7 +8,7 @@ from icmp import build
 from functools import reduce
 import logging
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 @pytest.fixture(scope='module')
 def loop():
@@ -37,11 +37,20 @@ def test_build_icmp():
     expected = b'\x08\x00\xf9\xff\x01\x00\x02\x00abcdefghij'
     assert(str(result) == str(expected))
 
+
+def test_new_ping_single_process(loop):
+    with aio_pinger(1) as p:
+        addrs = p.ping('8.8.8.0', '255.255.255.0')
+        print(f"{len(addrs)} addresses: {addrs}")
+
+
 def test_async_ping_multi_process(loop):
-    result = mp_ping_network('8.8.8.0', '255.255.255.0', 3)
-    cnt = reduce(lambda x,y: x + y, map(len, result))
-    print(f"{cnt} addresses: {result}")
+    result = mp_ping_network('8.8.8.0', '255.255.255.0', 1)
+    #cnt = reduce(lambda x,y: x + y, map(len, result))
+
+    print(f"{len(result)} addresses: {result}")
 
 def test_async_ping_single_process(loop):
-    addrs = ping_network('8.8.8.0', '255.255.255.0', 3)
+    addresses = {}
+    addrs = ping_network('8.8.8.0', '255.255.255.0', 1)
     print(f"{len(addrs)} addresses: {addrs}")
