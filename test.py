@@ -46,7 +46,7 @@ def test_new_ping_single_process(loop):
 
 def test_async_ping_multi_process(loop):
     result = mp_ping_network('8.8.8.0', '255.255.255.0', 1)
-    #cnt = reduce(lambda x,y: x + y, map(len, result))
+    # cnt = reduce(lambda x,y: x + y, map(len, result))
 
     print(f"{len(result)} addresses: {result}")
 

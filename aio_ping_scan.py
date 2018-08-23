@@ -98,9 +98,9 @@ class aio_pinger(object):
     async def _recv(self):
         try:
             while True:
-                # receive a packet or wait till we timeout (will throw an asyncio.TimeoutError after self.timeout)
                 try:
                     self.logger.debug("listening...")
+                    # receive a packet or wait till we timeout (will throw an asyncio.TimeoutError after self.timeout)
                     recv_packet = await asyncio.wait_for(self.loop.sock_recv(self.rsock, ICMP_MAX_SIZE),
                                                          self.timeout / 2)
                 except asyncio.TimeoutError:
@@ -112,7 +112,9 @@ class aio_pinger(object):
                     else:
                         self.logger.debug("Timeout but not done sending.. retrying")
                         continue
+
                 self.logger.debug("Got packet, enqueuing")
+
                 # enqueue the received packet (parsing it will be done elsewhere)
                 self.queue.put_nowait(recv_packet)
 
@@ -153,11 +155,9 @@ class aio_pinger(object):
                 offset = ICMP_OFFSET
                 icmp_header = packet[offset:offset + 8]
 
-                type, code, checksum, packet_id, sequence = struct.unpack(
-                    "bbHHh", icmp_header
-                )
+                icmp_type, code, checksum, packet_id, sequence = struct.unpack("bbHHh", icmp_header)
 
-                if type == ICMP_ECHO_REPLY:
+                if icmp_type == ICMP_ECHO_REPLY:
                     resp_ip = packet[SRC_IP_OFFSET:SRC_IP_OFFSET + 4]
                     self.logger.debug(f"packet is icmp reply. adding to list - {resp_ip}")
                     self.addresses.update({ipaddress.ip_address(resp_ip): True})
@@ -187,7 +187,7 @@ class aio_pinger(object):
             self.logger.error(f'send:: {str(e)}')
             pass
 
-    async def _send_ping_network(self, ip, network):
+    async def _send_ping_network(self):
         t1 = time.time()
         self.logger.debug(f"starting sending...")
         for addr in self.addrs:
@@ -208,7 +208,6 @@ class aio_pinger(object):
 
     def _generate_ips(self, ip, netmask):
         self.addrs = ip_mask_to_list(ip, netmask)
-
 
 
 def mp_ping_network(ip, netmask, timeout, processes=4):
