@@ -13,6 +13,7 @@ def ip_mask_to_list(ip, netmask):
         yield str(addr)
 
 
+
 def split_networks(ip: str, netmask: str, partitions: int =4) -> List[Tuple[str, str]]:
     """
     split an IPv4 network into a ip/mask into a number partitions.

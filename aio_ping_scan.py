@@ -7,7 +7,12 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from utils import split_networks, ip_mask_to_list
 from icmp import build
+
+import multiprocessing
+
 logger = logging.getLogger(__name__)
+
+from typing import Union
 
 sender_id = 1
 seq = 1
@@ -22,9 +27,33 @@ ICMP_NETWORK_UNREACH = 3
 
 addresses = {}
 
+address_queue = multiprocessing.Queue()
 
 class TimeOutError(Exception):
     pass
+
+
+def mp_ping(ip, network, timeout, processes=4):
+
+    networks = split_networks(ip, network, processes)
+
+    tasks = []
+    pingers = []
+    for network in networks:
+        pingers.append(aio_pinger(timeout))
+        # (loop.run_in_executor(executor, , ))
+        task = multiprocessing.Process(target=pingers[len(pingers) - 1].ping, args=(network[0], network[1]))
+        tasks.append(task)
+        task.start()
+
+    for task in tasks:
+        task.join()
+
+    mylist = []
+    while not address_queue.empty():
+        mylist.append(address_queue.get())
+    # result = loop.run_until_complete(asyncio.gather(*tasks))
+    return mylist
 
 
 class aio_pinger(object):
@@ -41,10 +70,10 @@ class aio_pinger(object):
         self.addrs = []
         self.addresses = {}
         self.start_time = None
-
-    def __enter__(self):
         self.rsock = self._create_socket()
         self.ssock = self._create_socket()
+        self.offset = ICMP_OFFSET
+    def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -65,22 +94,14 @@ class aio_pinger(object):
 
         self.done_receiving = False
 
-        executor = ProcessPoolExecutor(max_workers=4)
         try:
-            # tasks = [loop.run_in_executor(executor, ping_network, network[0], network[1], timeout) for network in
-            #          networks]
-            # result = loop.run_until_complete(asyncio.gather(*tasks))
-            #tasks = [loop.run_in_executor(executor, )]
-            # self._send_ping_network(ip, network)
-            # self._recv()
-            # self._process()
             self.loop = asyncio.get_event_loop()
             tasks = [asyncio.ensure_future(self._recv()),
-                     asyncio.ensure_future(self._send_ping_network(ip, network)),
+                     asyncio.ensure_future(self._send_ping_network()),
                      asyncio.ensure_future(self._process())]
-        # tasks = [asyncio.ensure_future(ping(addr, timeout)) for addr in ip_mask_to_list(ip, netmask)]
-            result = self.loop.run_until_complete(asyncio.gather(*tasks))
-            return [str(addr) for addr in self.addresses]
+            self.loop.run_until_complete(asyncio.gather(*tasks))
+
+            return [address_queue.put(str(addr)) for addr in self.addresses]
         #
         except Exception as e:
             self.logger.debug(f'{str(e)}')
@@ -91,7 +112,9 @@ class aio_pinger(object):
     @staticmethod
     def _create_socket():
         sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_RAW, proto=socket.IPPROTO_ICMP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # sock.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF, 10485760)
+        # print(sock.getsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF))
         sock.setblocking(False)
         return sock
 
@@ -136,46 +159,44 @@ class aio_pinger(object):
             self.logger.error(f'{str(e)}')
             return
 
+    def _is_icmp_reply(self, packet: bytes) -> Union[None, bytes]:
+
+        icmp_header = packet[self.offset:self.offset + 8]
+
+        icmp_type, code, checksum, packet_id, sequence = struct.unpack("bbHHh", icmp_header)
+
+        if icmp_type == ICMP_ECHO_REPLY:
+            resp_ip = packet[SRC_IP_OFFSET:SRC_IP_OFFSET + 4]
+            return resp_ip
+        else:
+            return None
+
     async def _process(self):
         try:
             while True:
                 try:
-                    packet = await asyncio.wait_for(self.queue.get(), self.timeout / 2)
+                    packet = await asyncio.wait_for(self.queue.get(), self.timeout / 3)
                 except asyncio.TimeoutError:
-                    self.logger.debug(f'recv timed out')
+                    # if recv isn't done yet, just keep trying to get from the queue
                     if self.done_receiving:
+                        # if queue isn't empty yet we're not done
                         if self.queue.empty():
+                            # queue empty, recv done & queue.get timeout -> processing packets is done
                             self.logger.debug("Done with recv & timeout")
-                            raise asyncio.TimeoutError
+                            return
                         continue
                     else:
                         self.logger.debug("Timeout but not done sending.. retrying")
                         continue
                 self.logger.debug("Receiver took packet from queue...")
-                offset = ICMP_OFFSET
-                icmp_header = packet[offset:offset + 8]
 
-                icmp_type, code, checksum, packet_id, sequence = struct.unpack("bbHHh", icmp_header)
-
-                if icmp_type == ICMP_ECHO_REPLY:
-                    resp_ip = packet[SRC_IP_OFFSET:SRC_IP_OFFSET + 4]
+                resp_ip = self._is_icmp_reply(packet)
+                if resp_ip:
                     self.logger.debug(f"packet is icmp reply. adding to list - {resp_ip}")
                     self.addresses.update({ipaddress.ip_address(resp_ip): True})
-                    # if ipaddress.ip_address(resp_ip) == ipaddress.ip_address(ip):
-                    #     return ipaddress.ip_address(ip)
-                # after handling the packet check if we timed out already
+
+                # after handling the packet pass the execution back to the recv/send
                 await asyncio.sleep(0)
-                # td = int((time.time() - self.start_time) * 1000)
-
-                # timeout is divided by 2 here and in the recv because in the worst case we will be waiting
-                # timeout/2 at the recv
-                # if td > self.timeout * 1000 / 2:
-                #     self.logger.debug(f'recv timed out')
-                #     return
-
-        except asyncio.TimeoutError:
-            self.logger.debug(f'recv timed out')
-            return
         except Exception as e:
             self.logger.error(f'{str(e)}')
             return
@@ -190,6 +211,7 @@ class aio_pinger(object):
     async def _send_ping_network(self):
         t1 = time.time()
         self.logger.debug(f"starting sending...")
+        counter = 0
         for addr in self.addrs:
             self.sequence = pkt_seq = (self.sequence + 1) % 30000
 
@@ -198,7 +220,10 @@ class aio_pinger(object):
             # info = await asyncio.get_event_loop().getaddrinfo(ip, 0)
             try:
                 self.loop.call_soon_threadsafe(self._send, self.ssock, addr, packet)
-                await asyncio.sleep(0)
+                counter = counter + 1
+                if (counter % 1024 == 0):
+                     await asyncio.sleep(0)
+                # await await asyncio.sleep(0.05)
             except Exception as e:
                 logger.error(f'send_wrap::{str(e)}')
                 return False

@@ -6,7 +6,7 @@ from icmp import build
 
 import logging
 
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=logging.DEBUG)
 
 
 @pytest.fixture(scope='module')
@@ -40,9 +40,12 @@ def test_build_icmp():
 
 def test_new_ping_single_process(loop):
     with aio_pinger(3) as p:
-        addrs = p.ping('8.8.0.0', '255.255.0.0')
+        addrs = p.ping('8.8.8.0', '255.255.255.0')
         print(f"{len(addrs)} addresses: {addrs}")
 
+def test_new_ping_multi_process(loop):
+    addrs = mp_ping('8.0.0.0', '255.0.0.0', 15)
+    print(f"{len(addrs)} addresses: {addrs}")
 
 def test_async_ping_multi_process(loop):
     result = mp_ping_network('8.8.8.0', '255.255.255.0', 1)
