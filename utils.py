@@ -6,12 +6,12 @@ from typing import Tuple, List
 
 
 def ip_mask_to_list(ip, netmask):
-    """ return list of string ip addresses in ip/netmask (including network names and broadcasts) """
+    """ return list of string ip addresses in ip/netmask (including network names and broadcasts)
+    :except ValueError: Invalid IP or Netmask"""
     # todo: turn this into a generator
     net = ipaddress.IPv4Network(f'{ip}/{netmask}')
     for addr in net:
         yield str(addr)
-
 
 
 def split_networks(ip: str, netmask: str, partitions: int =4) -> List[Tuple[str, str]]:

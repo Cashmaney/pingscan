@@ -1,12 +1,14 @@
 import pytest
 
+from multiping import multi_ping
+
 from utils import *
 from aio_ping_scan import *
 from icmp import build
 
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 
 @pytest.fixture(scope='module')
@@ -21,6 +23,17 @@ def test_ip_mask_to_list():
     addrs = ip_mask_to_list('192.168.1.0', '255.255.255.252')
     expected_addrs = ['192.168.1.1', '192.168.1.2']
 #    assert addrs == expected_addrs
+
+
+def test_multiping():
+    addrs = ip_mask_to_list('192.168.1.0', '255.255.255.0')
+    addrs = list(addrs)[1:-1]
+    try:
+        result = multi_ping(addrs,
+                            timeout=0.1, retry=0, ignore_lookup_errors=True)
+        print(f'{len(result[0])}')
+    except socket.timeout as e:
+        print(f'{e}')
 
 
 def test_split_netmask():
@@ -38,11 +51,12 @@ def test_build_icmp():
     assert(str(result) == str(expected))
 
 
-def test_new_ping_single_process(loop):
-    with aio_pinger(3) as p:
-        addrs = p.ping('8.8.8.0', '255.255.255.0')
-        print(f"{len(addrs)} addresses: {addrs}")
-
+#
+# def test_new_ping_single_process(loop):
+#     with aio_pinger(3) as p:
+#         addrs = p.ping('8.8.8.0', '255.255.255.0')
+#         print(f"{len(addrs)} addresses: {addrs}")
+#
 def test_new_ping_multi_process(loop):
-    addrs = mp_ping('8.0.0.0', '255.0.0.0', 15)
+    addrs = mp_ping('192.168.1.0', '255.255.255.0', 0.1, 1)
     print(f"{len(addrs)} addresses: {addrs}")

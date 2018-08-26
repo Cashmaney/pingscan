@@ -35,20 +35,20 @@ def mp_ping(ip, network, timeout, processes=4):
     tasks = []
     pingers = []
     for network in networks:
-        pingers.append(aio_pinger(timeout))
+        pingers.append(aio_pinger())
         # (loop.run_in_executor(executor, , ))
-        task = multiprocessing.Process(target=pingers[len(pingers) - 1].ping, args=(network[0], network[1]))
+        task = multiprocessing.Process(target=pingers[len(pingers) - 1].ping, args=(network[0], network[1], timeout))
         tasks.append(task)
         task.start()
 
     for task in tasks:
         task.join()
 
-    mylist = []
+    results = {}
     while not address_queue.empty():
-        mylist.append(address_queue.get())
+        results.update({address_queue.get():True})
     # result = loop.run_until_complete(asyncio.gather(*tasks))
-    return mylist
+    return results
 
 
 class aio_pinger(object):
@@ -106,8 +106,8 @@ class aio_pinger(object):
     @staticmethod
     def _create_socket():
         sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_RAW, proto=socket.IPPROTO_ICMP)
-        # sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # sock.setsockopt(socket.SOL_SOCKET,socket.SO_SNDBUF, 10485760)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 10485760)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 10485760)
         sock.setblocking(False)
         return sock
 
@@ -186,7 +186,11 @@ class aio_pinger(object):
             return
 
     def _send(self, sock, dest, packet):
-        sock.sendto(packet, (dest, 0))
+        try:
+            sock.sendto(packet, (dest, 0))
+        except PermissionError:
+            self.logger.warning("Permission error: Are you root? Are you trying to send a ping to an invalid address?")
+            pass
 
     async def _send_ping_network(self):
         """ ping all addresses stored in self.addrs"""
@@ -195,18 +199,14 @@ class aio_pinger(object):
         counter = 0
         try:
             for addr in self.addrs:
-                self.sequence = pkt_seq = (self.sequence + 1) % 30000
+                self.sequence = pkt_seq = (self.sequence + 1) % (icmp.ICMP_MAX_SEQUENCE + 1)
 
                 packet = build(pkt_seq, sender_id)
-                self.loop.call_soon_threadsafe(self._send, self.ssock, addr, packet)
+                self.loop.call_soon(self._send, self.ssock, addr, packet)
                 counter = counter + 1
                 # not sure if this does anything, but sure
                 if counter % 1024 == 0:
                     await asyncio.sleep(0)
-                # await await asyncio.sleep(0.05)
-        except Exception as e:
-            logger.error(f'send_wrap::{str(e)}')
-            return False
         finally:
             self.logger.debug(f"done sending! [{int((time.time() - t1) * 1000)}ms]")
             self.done_sending = True

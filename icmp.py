@@ -10,8 +10,10 @@ ICMP_ECHO_REPLY = 0
 ICMP_OFFSET_V4 = 20
 SRC_IP_OFFSET_v4 = 12
 ICMP_NETWORK_UNREACH = 3
+ICMP_MAX_SEQUENCE = 65535
 IPv4 = 0
 IPv6 = 1
+
 
 def parse(packet: bytes) -> ICMPHeader:
     icmp_header = packet[20:28]
