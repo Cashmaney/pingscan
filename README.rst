@@ -10,7 +10,18 @@ Packet building is in cython, scanning is done in multiprocessing using async sc
 
 ** If you're reading this the code is highly unstable, not recommended in production, and not optimized **
 
+** Since I wrote this I found multiping. My version is slightly faster, but less reliable at the moment.
+
 Performance
 ------------
-Currently sucks, but can do a /16 segment (65535 addresses) in about 10 seconds, depending on your internet connection.
-Assuming this scales linearly (spoiler: it doesn't), this means scanning a /8 in 43 minutes, and the entire v4 address space in about 7 days. Still worse than a simple recv/send in C though
+Currently sucks, but can do a /16 segment (65535 addresses) in about 6 seconds, depending on your internet connection.
+Assuming this scales linearly (spoiler: it doesn't), this means scanning a /8 in ~20 minutes, and the entire v4 address
+space in about 3 days. Still worse than a simple recv/send in C though!
+
+TODO
+------------
+Planning to add a tcp/udp scanner
+
+RARP function
+
+Others

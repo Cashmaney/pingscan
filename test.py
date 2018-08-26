@@ -8,7 +8,7 @@ from icmp import build
 
 import logging
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 
 @pytest.fixture(scope='module')
@@ -25,15 +25,6 @@ def test_ip_mask_to_list():
 #    assert addrs == expected_addrs
 
 
-def test_multiping():
-    addrs = ip_mask_to_list('192.168.1.0', '255.255.255.0')
-    addrs = list(addrs)[1:-1]
-    try:
-        result = multi_ping(addrs,
-                            timeout=0.1, retry=0, ignore_lookup_errors=True)
-        print(f'{len(result[0])}')
-    except socket.timeout as e:
-        print(f'{e}')
 
 
 def test_split_netmask():
@@ -57,6 +48,17 @@ def test_build_icmp():
 #         addrs = p.ping('8.8.8.0', '255.255.255.0')
 #         print(f"{len(addrs)} addresses: {addrs}")
 #
+
+def test_multiping():
+    addrs = ip_mask_to_list('8.8.0.0', '255.255.0.0')
+    addrs = list(addrs)[1:-1]
+    try:
+        result = multi_ping(addrs,
+                            timeout=3, retry=0, ignore_lookup_errors=True)
+        print(f'{len(result[0])}: {result[0]}')
+    except socket.timeout as e:
+        print(f'{e}')
+
 def test_new_ping_multi_process(loop):
-    addrs = mp_ping('192.168.1.0', '255.255.255.0', 0.1, 1)
+    addrs = mp_ping('8.8.0.0', '255.255.0.0', 3, 2)
     print(f"{len(addrs)} addresses: {addrs}")

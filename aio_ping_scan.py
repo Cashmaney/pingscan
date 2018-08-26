@@ -10,7 +10,7 @@ from icmp import build
 
 import multiprocessing
 import icmp
-from typing import Union, List
+from typing import Union, List, Generator
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +34,18 @@ def mp_ping(ip, network, timeout, processes=4):
 
     tasks = []
     pingers = []
+
+    # toggle for no_recv in ping method
+    first_run = False
+
     for network in networks:
         pingers.append(aio_pinger())
-        # (loop.run_in_executor(executor, , ))
-        task = multiprocessing.Process(target=pingers[len(pingers) - 1].ping, args=(network[0], network[1], timeout))
+        # run the ping once for each of the split networks, also call no_recv with False only once
+        # - we run the recv/process function once because we don't need 4 of them.
+        task = multiprocessing.Process(target=pingers[len(pingers) - 1].ping, args=(network[0], network[1], timeout, first_run))
         tasks.append(task)
         task.start()
+        first_run = True
 
     for task in tasks:
         task.join()
@@ -84,19 +90,18 @@ class aio_pinger(object):
         self.rsock.close()
         self.ssock.close()
 
-    def ping(self, ip: str, network: str, timeout=5) -> List[str]:
-        self.timeout = timeout
-        t1 = time.time()
-        self.logger.debug("started to calculate IPs...")
-        self._generate_ips(ip, network)
-        self.logger.debug(f"done [{int((time.time() - t1) * 1000 * 1000)}us]")
-        self.start_time = time.time()
+    def _sync_recv(self):
+        pass
 
+    def ping(self, ip: str, network: str = '255.255.255.255', timeout=5, no_recv=False) -> List[str]:
+        self.timeout = timeout
+        self.start_time = time.time()
         try:
             self.loop = asyncio.get_event_loop()
-            tasks = [asyncio.ensure_future(self._recv()),
-                     asyncio.ensure_future(self._send_ping_network()),
-                     asyncio.ensure_future(self._process())]
+            tasks = [asyncio.ensure_future(self.send_multiple(ip, network))]
+            if not no_recv:
+                tasks.append(asyncio.ensure_future(self._recv()))
+                tasks.append(asyncio.ensure_future(self._process()))
             self.loop.run_until_complete(asyncio.gather(*tasks))
 
             return [address_queue.put(str(addr)) for addr in self.addresses]
@@ -116,6 +121,9 @@ class aio_pinger(object):
         Async recv function. Will try to receive until the sender method is done, then will receive until timeout is done.
         Note: we're trying to receive from a raw socket, so even if we use multiple listeners they will wake on the
         same packets
+
+        # honestly this is kind of unreliable... Need to rework it
+
         :return:
         """
         try:
@@ -192,13 +200,17 @@ class aio_pinger(object):
             self.logger.warning("Permission error: Are you root? Are you trying to send a ping to an invalid address?")
             pass
 
-    async def _send_ping_network(self):
+    async def send_multiple(self, ip: str, network: str = '255.255.255.255'):
         """ ping all addresses stored in self.addrs"""
         t1 = time.time()
+        self.logger.debug("started to calculate IPs...")
+        addrs = self._generate_ips(ip, network)
+        self.logger.debug(f"done [{int((time.time() - t1) * 1000 * 1000)}us]")
+
         self.logger.debug(f"starting sending...")
         counter = 0
         try:
-            for addr in self.addrs:
+            for addr in addrs:
                 self.sequence = pkt_seq = (self.sequence + 1) % (icmp.ICMP_MAX_SEQUENCE + 1)
 
                 packet = build(pkt_seq, sender_id)
@@ -212,6 +224,6 @@ class aio_pinger(object):
             self.done_sending = True
             self.done_sending_time = time.time()
 
-    def _generate_ips(self, ip: str, netmask: str) -> None:
+    def _generate_ips(self, ip: str, netmask: str) -> Generator[str, str, str]:
         """ convert an ip/subnetmask pair to a list of discrete addresses"""
-        self.addrs = ip_mask_to_list(ip, netmask)
+        return ip_mask_to_list(ip, netmask)
