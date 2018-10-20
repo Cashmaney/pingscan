@@ -14,6 +14,8 @@ ICMP_MAX_SEQUENCE = 65535
 IPv4 = 0
 IPv6 = 1
 
+offset = ICMP_OFFSET_V4
+offset_src_ip = SRC_IP_OFFSET_v4
 
 def parse(packet: bytes) -> ICMPHeader:
     icmp_header = packet[20:28]
@@ -26,21 +28,18 @@ def build(seq=1, msg_id=1) -> bytes:
     return bytes(packet)
 
 
-def src_ip_from_packet(packet: bytes, family: int=IPv4) -> bytes:
+def src_ip_from_packet(packet: memoryview, family: int=IPv4) -> int:
     # if family == IPv4:
-    offset = SRC_IP_OFFSET_v4
-    resp_ip = packet[offset:offset + 4]
+
+    resp_ip = int().from_bytes(packet[offset_src_ip:offset_src_ip + 4], byteorder='little')
     return resp_ip
 
 
-def is_icmp_reply(packet: bytes, family: int=IPv4) -> bool:
+def is_icmp_reply(packet: memoryview, family: int=IPv4) -> bool:
     # if family == IPv4:
-    offset = ICMP_OFFSET_V4
-    icmp_header = packet[offset:offset + 8]
 
-    icmp_type, code, checksum, packet_id, sequence = struct.unpack("bbHHh", icmp_header)
-
-    if icmp_type == ICMP_ECHO_REPLY:
+    # icmp type
+    if packet[offset] == ICMP_ECHO_REPLY:
         return True
     else:
         return False
