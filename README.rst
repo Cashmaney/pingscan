@@ -11,7 +11,9 @@ Packet building is in cython, sending the packets is done with multiprocessing, 
 ** If you're reading this the code is highly unstable, not recommended in production, and not optimized **
 
 ** Since I wrote this I found multiping. My version is slightly faster, but less reliable at the moment.
-
+ 
+** Only working on Linux
+ 
 Performance
 ------------
 Currently sucks, but can do a /16 segment (65535 addresses) in about 6 seconds, depending on your internet connection.
