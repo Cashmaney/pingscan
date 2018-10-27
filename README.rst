@@ -16,7 +16,7 @@ Performance
 ------------
 Currently sucks, but can do a /16 segment (65535 addresses) in about 6 seconds, depending on your internet connection.
 Assuming this scales linearly (spoiler: it doesn't), this means scanning a /8 in ~20 minutes, and the entire v4 address
-space in about 3 days. Still worse than a simple recv/send in C though!
+space in about 3 days.
 
 TODO
 ------------
