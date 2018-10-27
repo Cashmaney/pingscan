@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from utils import split_networks, _generate_ips, _send, get_eventloop, get_socket
+from utils import split_networks, _generate_ips, _send, get_eventloop, get_socket, host_count
 from icmp import build
 
 import multiprocessing
@@ -15,12 +15,13 @@ import socket
 logger = logging.getLogger(__name__)
 
 
-ICMP_MAX_SIZE = 38
+ICMP_MAX_SIZE = 150
 sender_id = 1
 seq = 1
 
 
-def ping(ip, network='255.255.255.255', *, timeout, workers=4):
+# timeout > 0 just so everything won't timeout immediately
+def ping(ip, network='255.255.255.255', *, timeout=0.01, workers=4):
     """ main method for ping scanning """
 
     with get_eventloop() as loop:
@@ -42,6 +43,7 @@ class AsyncPinger:
         self.logger = logging.getLogger(__class__.__name__)
         self.queue = asyncio.Queue()
         self.addresses = {}
+        self.num_of_hosts = 0
         self.start_time = None
         self.worker_processes = 1
         self.rsock = None
@@ -50,6 +52,8 @@ class AsyncPinger:
     def ping(self, ip: str, network: str = '255.255.255.255', timeout: Union[int, float] = 5, workers: int = 4) -> dict:
         self.timeout = timeout
         self.worker_processes = workers
+
+        self.num_of_hosts = host_count(ip, network)
 
         self.loop.call_soon(self.send, ip, network)
 
@@ -63,18 +67,20 @@ class AsyncPinger:
         return self.fetch_result()
 
     async def process(self):
+        """ responsible for removing packets from the queue and processing them. End condition is when the queue is
+         empty and timeout has passed """
         while True:
             try:
+
                 packet = await asyncio.wait_for(self.queue.get(), self.timeout / 10)
+
             except asyncio.TimeoutError:
                 # if queue isn't empty yet we're not done
                 if self.queue.empty() and self._is_timeout():
                     # queue empty, recv done & queue.get timeout -> processing packets is done
-                    # self.logger.debug("Done with recv & timeut")
                     return
-                    # self.logger.debug("Timeout but not done sending. Retrying")
                 continue
-            # self.logger.debug("Receiver took packet from queue...")
+
             self.process_packet(packet, self._process_callback)
 
     async def recv(self):
@@ -84,16 +90,19 @@ class AsyncPinger:
         same packets
 
         """
-        bytebuff = bytearray(65535*ICMP_MAX_SIZE)
-        sofar = 0
+        # need to make the buffer big enough to guard against overflow
+        bufsiz = self.num_of_hosts * ICMP_MAX_SIZE * 2
+        bytebuff = bytearray(bufsiz)
+        pos = 0
         while True:
             try:
-                memview = memoryview(bytebuff)[sofar:sofar + ICMP_MAX_SIZE]
+                memview = memoryview(bytebuff)[pos:pos + ICMP_MAX_SIZE]
 
-                nread = await asyncio.wait_for(self.loop.sock_recv_into(self.rsock, memview),
+                read = await asyncio.wait_for(self.loop.sock_recv_into(self.rsock, memview),
                                                self.timeout / 100)
 
-                sofar += nread
+                pos += read
+                pos = pos % bufsiz
 
             except asyncio.TimeoutError:
                 if self._is_timeout():
@@ -103,7 +112,7 @@ class AsyncPinger:
             # self.logger.error(f"Got packet {time.time()-self.start_time}, enqueuing")
             # enqueue the received packet (parsing it will be done elsewhere)
             self.queue.put_nowait(memview)
-            # after handling the packet check if we timed out already
+
             if self._is_timeout():
                 return
             continue

@@ -34,6 +34,13 @@ def ip_mask_to_list(ip, netmask):
     return net.hosts()
 
 
+def host_count(ip, netmask):
+    """ return list of string ip addresses in ip/netmask (including network names and broadcasts)
+    :except ValueError: Invalid IP or Netmask"""
+    net = ipaddress.IPv4Network(f'{ip}/{netmask}')
+    return net.num_addresses - 2
+
+
 def split_networks(ip: str, netmask: str, partitions: int = 4) -> List[Tuple[str, str]]:
     """
     split an IPv4 network into a ip/mask into a number partitions.
