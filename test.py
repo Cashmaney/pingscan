@@ -3,7 +3,7 @@ import pytest
 from multiping import multi_ping
 
 from utils import *
-from aio_ping_scan import *
+from netscan import *
 from icmp import build
 
 import logging

@@ -28,18 +28,18 @@ def build(seq=1, msg_id=1) -> bytes:
     return bytes(packet)
 
 
-def src_ip_from_packet(packet: memoryview, family: int=IPv4) -> int:
+def src_ip_from_packet(packet: memoryview, pos:int = 0, family: int=IPv4) -> int:
     # if family == IPv4:
 
-    resp_ip = int().from_bytes(packet[offset_src_ip:offset_src_ip + 4], byteorder='little')
+    resp_ip = int().from_bytes(packet[offset_src_ip + pos:offset_src_ip + 4 + pos], byteorder='little')
     return resp_ip
 
 
-def is_icmp_reply(packet: memoryview, family: int=IPv4) -> bool:
+def is_icmp_reply(packet: memoryview, pos: int = 0, family: int=IPv4) -> bool:
     # if family == IPv4:
 
     # icmp type
-    if packet[offset] == ICMP_ECHO_REPLY:
+    if packet[offset + pos] == ICMP_ECHO_REPLY:
         return True
     else:
         return False
