@@ -1,10 +1,6 @@
 import pytest
 
-from multiping import multi_ping
-
-from utils import *
-from netscan import *
-from icmp import build
+from netscan.netscan import *
 
 import logging
 
@@ -59,7 +55,7 @@ def loop():
 #     except socket.timeout as e:
 #         print(f'{e}')
 
-
-def test_new_ping_multi_process(loop):
-    addrs = mp_ping('127.0.0.0', '255.255.255.255', timeout=1, workers=1)
-    print(f"{len(addrs)} addresses: {addrs}")
+#
+# def test_new_ping_multi_process(loop):
+#     addrs = mp_ping('127.0.0.0', '255.255.255.255', timeout=1, workers=1)
+#     print(f"{len(addrs)} addresses: {addrs}")

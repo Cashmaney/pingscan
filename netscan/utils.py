@@ -74,6 +74,7 @@ def split_networks(ip: str, netmask: str, partitions: int = 4) -> List[Tuple[str
         pairs.append((str(ipaddress.IPv4Address(ip_int + i * (mask_add + 1))), str(ipaddress.IPv4Address(new_mask))))
     return pairs
 
+
 @contextmanager
 def get_eventloop():
     # Code to acquire resource, e.g.:

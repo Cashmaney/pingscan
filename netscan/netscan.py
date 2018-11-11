@@ -1,31 +1,34 @@
 import asyncio
 import logging
 import time
-from utils import split_networks, _generate_ips, _send, get_eventloop, get_socket, host_count
-from icmp import build
-
 import multiprocessing
-import icmp
-from multiprocessing import Value
-
+import random
 from typing import Callable, Union
 
-import socket
+from netscan import icmp
+from netscan.icmp import build
+from netscan.utils import split_networks, _generate_ips, _send, get_eventloop, get_socket, host_count
+
 
 logger = logging.getLogger(__name__)
 
-
+default_timeout = 0.1
 ICMP_MAX_SIZE = 150
 sender_id = 1
 seq = 1
 
 
 # timeout > 0 just so everything won't timeout immediately
-def ping(ip, network='255.255.255.255', *, timeout=0.01, workers=4):
+def scan(ip: str, network: str='255.255.255.255', *, timeout: float=default_timeout,
+         workers: int=4, loop: asyncio.AbstractEventLoop):
     """ main method for ping scanning """
-
-    with get_eventloop() as loop:
+    # we might be provided with an event loop
+    if loop:
         result = AsyncPinger(loop=loop).ping(ip, network, timeout, workers)
+
+    else:
+        with get_eventloop() as loop:
+            result = AsyncPinger(loop=loop).ping(ip, network, timeout, workers)
 
     return result
 
@@ -33,7 +36,6 @@ def ping(ip, network='255.255.255.255', *, timeout=0.01, workers=4):
 class AsyncPinger:
     """
     pinger class - we're using a class here because it's the easy to store shared values and duplicate them
-    e.g in case we wanted to use multiprocessing
     """
 
     def __init__(self, loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()) -> None:
@@ -47,9 +49,11 @@ class AsyncPinger:
         self.start_time = None
         self.worker_processes = 1
         self.rsock = None
-        self.send_done_count = Value('i', 0)
+        self.id = random.randint(0, 65535)  # 2 byte max value, we use this to support multithreading
+        self.send_done_count = multiprocessing.Value('i', 0)
 
-    def ping(self, ip: str, network: str = '255.255.255.255', timeout: Union[int, float] = 5, workers: int = 4) -> dict:
+    def ping(self, ip: str, network: str = '255.255.255.255',
+             timeout: float = default_timeout, workers: int = 4) -> dict:
         self.timeout = timeout
         self.worker_processes = workers
 
@@ -76,7 +80,7 @@ class AsyncPinger:
 
             except asyncio.TimeoutError:
                 # if queue isn't empty yet we're not done
-                if self.queue.empty() and self._is_timeout():
+                if self.queue.empty() and self._timeout():
                     # queue empty, recv done & queue.get timeout -> processing packets is done
                     return
                 continue
@@ -93,27 +97,27 @@ class AsyncPinger:
         # need to make the buffer big enough to guard against overflow
         bufsiz = self.num_of_hosts * ICMP_MAX_SIZE * 2
         bytebuff = bytearray(bufsiz)
+        # placeholder
         pos = 0
         while True:
             try:
                 memview = memoryview(bytebuff)[pos:pos + ICMP_MAX_SIZE]
 
                 read = await asyncio.wait_for(self.loop.sock_recv_into(self.rsock, memview),
-                                               self.timeout / 100)
+                                              self.timeout / 100)
 
                 pos += read
                 pos = pos % bufsiz
 
             except asyncio.TimeoutError:
-                if self._is_timeout():
+                if self._timeout():
                     return
                 continue
 
-            # self.logger.error(f"Got packet {time.time()-self.start_time}, enqueuing")
             # enqueue the received packet (parsing it will be done elsewhere)
             self.queue.put_nowait(memview)
 
-            if self._is_timeout():
+            if self._timeout():
                 return
             continue
 
@@ -123,58 +127,50 @@ class AsyncPinger:
     def fetch_result(self) -> dict:
         return self.addresses
 
-    @staticmethod
-    def process_packet(packet: memoryview, addr_handle_callback: Callable) -> None:
+    def process_packet(self, packet: memoryview, addr_handle_callback: Callable) -> None:
         """ Checks if a packet is ICMP reply, and records the sender address if it is. We use a callback here
         for handling of ip address even though it is probably a tiny bit more overhead to make it easier to understand
         the flow of the code """
-        if icmp.is_icmp_reply(packet):
+        if icmp.is_icmp_reply(packet) and icmp.msg_id_match(packet, self.id):
             resp_ip = icmp.src_ip_from_packet(packet)
-            # self.logger.debug(f"packet is icmp reply. adding to list - {resp_ip}")
             addr_handle_callback(resp_ip)
 
-    def _check_done_sending(self) -> bool:
-        # self.logger.debug(f"Evaluating end of send: {self.send_done_count} =? {self.worker_processes}")
+    def _done_sending(self) -> bool:
         return self.send_done_count.value == self.worker_processes
 
-    def _is_timeout(self) -> bool:
-        if self._check_done_sending():
+    def _timeout(self) -> bool:
+        if self._done_sending():
             if not self.start_time:
                 self.start_time = time.time()
 
             td = int((time.time() - self.start_time) * 1000)
 
-            # self.logger.debug(f"Evaluating timeout: {td} vs {self.timeout * 1000 * 99 / 100}")
             return td > self.timeout * 1000 * 99 / 100
 
     def send(self, ip: str, network: str):
         networks = split_networks(ip, network, self.worker_processes)
         for network in networks:
             process = multiprocessing.Process(target=send_multiple,
-                                              args=(self.send_done_count, network[0], network[1]))
+                                              args=(self.send_done_count, network[0], network[1], self.id))
             process.start()
 
 
-def send_multiple(send_done_count: multiprocessing.Value, ip: str, network: str = '255.255.255.255'):
-    """ ping all addresses stored in self.addrs"""
-    t1 = time.time()
-    logger.debug("started to calculate IPs...")
-    addrs = _generate_ips(ip, network)
-    logger.debug(f"done [{int((time.time() - t1) * 1000 * 1000)}us]")
+def send_multiple(send_done_count: multiprocessing.Value, ip: str, network: str = '255.255.255.255', msg_id=1):
+    """ ping all addresses given by ip/network combo
 
-    logger.debug(f"starting sending...")
-    counter = 0
+    send_done_count is used as a semaphore so we can tell if all jobs are finished. Every worker will decrease it
+    by 1 when it finished
+
+    """
+    addrs = _generate_ips(ip, network)
+
     pkt_seq = 0
     with get_socket() as ssock:
         try:
             for addr in addrs:
-                pkt_seq = (pkt_seq + 1) % (icmp.ICMP_MAX_SEQUENCE + 1)
+                pkt_seq += 1 % icmp.MAX_SEQUENCE
 
-                packet = build(pkt_seq, sender_id)
+                packet = build(pkt_seq, msg_id)
                 _send(ssock, str(addr), packet)
-                counter = counter + 1
-        except ValueError:
-            logger.warning("Invalid IP Address/Mask")
         finally:
-            logger.debug(f"done sending! [{int((time.time() - t1) * 1000)}ms]")
             send_done_count.value += 1
