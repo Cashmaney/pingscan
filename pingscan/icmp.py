@@ -31,7 +31,7 @@ def build(seq=1, msg_id=1) -> bytes:
 
 def msg_id_match(packet: memoryview, msg_id=1, pos:int = 0, family: int=IPv4) -> int:
     # if family == IPv4:
-    print(f"{packet[msg_id_offset + pos]}")
+    # print(f"{packet[msg_id_offset + pos]}")
     # icmp type
     return int().from_bytes(packet[msg_id_offset + pos:msg_id_offset + 2 + pos], byteorder='little') == msg_id
 
@@ -39,7 +39,7 @@ def msg_id_match(packet: memoryview, msg_id=1, pos:int = 0, family: int=IPv4) ->
 def src_ip_from_packet(packet: memoryview, pos:int = 0, family: int=IPv4) -> int:
     # if family == IPv4:
 
-    resp_ip = int().from_bytes(packet[offset_src_ip + pos:offset_src_ip + 4 + pos], byteorder='little')
+    resp_ip = int().from_bytes(packet[offset_src_ip + pos:offset_src_ip + 4 + pos], byteorder='big')
     return resp_ip
 
 

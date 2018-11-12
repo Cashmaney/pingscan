@@ -1,6 +1,6 @@
 import time
 import logging
-from netscan import netscan
+import pingscan
 
 
 def main():
@@ -8,13 +8,10 @@ def main():
 
     start_time = time.time()
 
-    ip = '172.16.0.0'
-    network = '255.255.255.0'
-
-    res = netscan.scan(ip, network)
-    print(f"[{int((time.time() - start_time) * 1000)}ms] {len(res)}")
+    ips = ['127.0.0.0/24', '127.0.1.1', '127.0.1.2', '127.0.1.3', '127.0.1.4']
+    res = pingscan.scan(ips, timeout=1.5)
+    print(f"[{int((time.time() - start_time) * 1000)}ms] {len(res)}\n{res}")
 
 
 if __name__ == "__main__":
     main()
-

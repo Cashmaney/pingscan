@@ -3,34 +3,67 @@ import logging
 import time
 import multiprocessing
 import random
-from typing import Callable, Union
+import ipaddress
+from collections import defaultdict
+from typing import Callable, Union, List, Dict, Tuple
 
-from netscan import icmp
-from netscan.icmp import build
-from netscan.utils import split_networks, _generate_ips, _send, get_eventloop, get_socket, host_count
+from pingscan import icmp
+from pingscan.icmp import build
+from pingscan.utils import split_networks, _generate_ips, _send, host_count, split_addrs
+from pingscan.resources import get_eventloop, get_socket
 
 
 logger = logging.getLogger(__name__)
 
-default_timeout = 0.1
+default_processes = 4
+default_timeout = 1
 ICMP_MAX_SIZE = 150
 sender_id = 1
 seq = 1
 
 
-# timeout > 0 just so everything won't timeout immediately
-def scan(ip: str, network: str='255.255.255.255', *, timeout: float=default_timeout,
-         workers: int=4, loop: asyncio.AbstractEventLoop):
-    """ main method for ping scanning """
+def scan(ip: Union[List, str], network: str='255.255.255.255', *, timeout: float=default_timeout,
+         workers: int = default_processes, loop: asyncio.AbstractEventLoop = None) -> List[str]:
+    """ main method for ping scanning IPv4 addresses
+
+    Usage: pingscan.scan(['192.168.0.0/24', '192.168.1.0/24','192.168.2.1']) OR
+           pingscan.scan('192.168.0.0', '255.255.255.0')
+
+    Additional parameters:
+        timeout: how long to wait for answers to respond. Starts counting from the end of the send
+        workers: number of processes to use for sending
+        loop: if you want to manage the asyncio loop yourself
+
+    :returns a list of all addresses that answered
+    """
+    tasks = _parse_input(ip, network, workers)
+
+    # make sure tasks isn't some strange length for some reason
+    assert(workers == len(tasks))
+
     # we might be provided with an event loop
     if loop:
-        result = AsyncPinger(loop=loop).ping(ip, network, timeout, workers)
+        result = AsyncPinger(loop=loop).ping(tasks, timeout, workers)
 
     else:
         with get_eventloop() as loop:
-            result = AsyncPinger(loop=loop).ping(ip, network, timeout, workers)
+            result = AsyncPinger(loop=loop).ping(tasks, timeout, workers)
 
     return result
+
+
+def _parse_input(ip: Union[List, str], network: str='255.255.255.255', workers: int = default_processes):
+    """ convert the ip, network into a structure containing address/masks """
+    # if this is list split it into worker tasks
+    if isinstance(ip, list):
+        tasks = split_addrs(ip, workers=workers)
+    else:
+        tasks = defaultdict(list)
+        # split the subnet into X subnets and append
+        for count, net in enumerate(split_networks(ip, network, partitions=workers)):
+            tasks[count].append(tuple(net))
+        tasks = dict(tasks)
+    return tasks
 
 
 class AsyncPinger:
@@ -44,7 +77,7 @@ class AsyncPinger:
         self.timeout = 0
         self.logger = logging.getLogger(__class__.__name__)
         self.queue = asyncio.Queue()
-        self.addresses = {}
+        self.addresses = []
         self.num_of_hosts = 0
         self.start_time = None
         self.worker_processes = 1
@@ -52,14 +85,27 @@ class AsyncPinger:
         self.id = random.randint(0, 65535)  # 2 byte max value, we use this to support multithreading
         self.send_done_count = multiprocessing.Value('i', 0)
 
-    def ping(self, ip: str, network: str = '255.255.255.255',
-             timeout: float = default_timeout, workers: int = 4) -> dict:
+    def ping(self, worker_tasks: Union[Dict[int, List[Tuple[str, str]]]],
+             timeout: float = default_timeout, workers: int = default_processes) -> list:
+        """
+        Usage: ping('192.168.0.0', '255.255.255.0') OR
+               ping({0: [('192.168.0.0', '255.255.255.192')],
+                    {1: [('192.168.0.64', '255.255.255.192')],
+                    ....
+                    }
+
+        Note that we already split the addresses when we called the top level method - this is already internals
+        so I don't mind the methods being less user-friendly
+        """
         self.timeout = timeout
         self.worker_processes = workers
 
-        self.num_of_hosts = host_count(ip, network)
+        for task in worker_tasks.values():
+            for ip, net in task:
+                self.num_of_hosts += host_count(ip, net)
 
-        self.loop.call_soon(self.send, ip, network)
+        logger.debug(f'total number of hosts to ping: {self.num_of_hosts}')
+        self.loop.call_soon(self.send, worker_tasks)
 
         tasks = list()
         with get_socket() as self.rsock:
@@ -122,10 +168,10 @@ class AsyncPinger:
             continue
 
     def _process_callback(self, ip: str):
-        self.addresses.update({ip: True})
+        self.addresses.append(ip)
 
-    def fetch_result(self) -> dict:
-        return self.addresses
+    def fetch_result(self) -> list:
+        return [str(ipaddress.IPv4Address(addr)) for addr in self.addresses]
 
     def process_packet(self, packet: memoryview, addr_handle_callback: Callable) -> None:
         """ Checks if a packet is ICMP reply, and records the sender address if it is. We use a callback here
@@ -147,30 +193,32 @@ class AsyncPinger:
 
             return td > self.timeout * 1000 * 99 / 100
 
-    def send(self, ip: str, network: str):
-        networks = split_networks(ip, network, self.worker_processes)
-        for network in networks:
+    def send(self, all_tasks: Dict[int, List[Tuple[str, str]]]):
+        # ip_list is in length workers, so it doesn't
+        # networks = split_networks(ip, network, self.worker_processes)
+        for task in all_tasks.values():
             process = multiprocessing.Process(target=send_multiple,
-                                              args=(self.send_done_count, network[0], network[1], self.id))
+                                              args=(self.send_done_count, task, self.id))
             process.start()
 
 
-def send_multiple(send_done_count: multiprocessing.Value, ip: str, network: str = '255.255.255.255', msg_id=1):
+def send_multiple(send_done_count: multiprocessing.Value, ips: List[Tuple[str, str]], msg_id=1):
     """ ping all addresses given by ip/network combo
 
     send_done_count is used as a semaphore so we can tell if all jobs are finished. Every worker will decrease it
     by 1 when it finished
 
     """
-    addrs = _generate_ips(ip, network)
-
-    pkt_seq = 0
     with get_socket() as ssock:
         try:
-            for addr in addrs:
-                pkt_seq += 1 % icmp.MAX_SEQUENCE
+            for ip, network in ips:
+                addrs = _generate_ips(ip, network)
 
-                packet = build(pkt_seq, msg_id)
-                _send(ssock, str(addr), packet)
+                pkt_seq = 0
+                for addr in addrs:
+                    pkt_seq += 1 % icmp.MAX_SEQUENCE
+
+                    packet = build(pkt_seq, msg_id)
+                    _send(ssock, str(addr), packet)
         finally:
             send_done_count.value += 1

@@ -1,6 +1,6 @@
 import pytest
 
-from netscan.netscan import *
+from pingscan.pingscan import *
 
 import logging
 
