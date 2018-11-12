@@ -1,6 +1,6 @@
 import struct
 import collections
-from cy_src.c_icmp import build as cbuild
+from pingscan.c_icmp import build as cbuild
 
 ICMPHeader = collections.namedtuple('ICMPHeader', 'type code checksum')
 
