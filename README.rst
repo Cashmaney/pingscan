@@ -12,6 +12,20 @@ At the moment only working on Linux, for IPv4.
 Code is probably quite rough around the edges, and while I don't expect it to break dramatically, you could encounter
 issues. Feel free to report anything.
 
+Installation
+------------
+To install first make sure you have the required header files to compile the C extensions:
+
+Apt (Ubuntu, Debian):
+``sudo apt-get install python3-dev``
+
+Yum (CentOS, RHEL):
+``sudo yum install python36-devel``
+
+Then install from pypi as usual:
+
+``pip install pingscan``
+
 Usage
 ------------
 *You need root or CAP_NET_RAW to send pings*
@@ -34,6 +48,12 @@ Contributions/Feedback
 Feel free to comment, report issues, give feedback or contribute in any way
 
 Feature requests are also welcome
+
+Not supported
+--------------
+Multithreading and multiprocessing - possible, but I didn't see a reason
+
+Response time of each host - if anyone requests this I can add it
 
 
 Performance Tuning
