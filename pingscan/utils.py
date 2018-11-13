@@ -4,12 +4,23 @@ import math
 import socket
 import logging
 import itertools
-from typing import Tuple, List, Generator, Union, Any
-
+import sys
 from collections import defaultdict
+from typing import Tuple, List, Generator, Union, Any
 
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_ip(ip: str):
+    """ validate that the ip is a string and a valid ipv4 address """
+    if isinstance(ip, int):
+        raise ValueError(f'IP address as an integer is not allowed: {ip}')
+    try:
+        ipaddress.IPv4Address(ip)
+    except ipaddress.AddressValueError as e:
+        sys.tracebacklimit = 0
+        raise ValueError(e.__str__()) from None  # disables exception chaining
 
 
 def split_addrs(ips: list, workers: int = 4):
@@ -17,6 +28,7 @@ def split_addrs(ips: list, workers: int = 4):
     pos = 0
     # for all addresses in the list
     for ip in ips:
+        _validate_ip(ip)
         # if its actually a subnet
         if ip_has_netmask(ip):
             # split the subnet into X subnets and append
@@ -75,20 +87,22 @@ def host_count(ip, netmask):
 
 
 def ip_has_netmask(ip: str = ''):
+    """ check if the address contains a subnet mask: e.g. 192.168.1.0/24"""
     particles = ip.split('/')
     if len(particles) == 2:
         try:
             if 32 >= int(particles[1]) >= 0:
                 return True
-            else:
-                raise ValueError(f'Invalid input, cannot convert \'{particles[1]}\' to valid subnet mask')
+            raise ValueError
         except ValueError as err:
+            sys.tracebacklimit = 0
             err.args = (f'Invalid input, cannot convert \'{particles[1]}\' to valid subnet mask',)
             raise
     return False
 
 
 def _seperate_ip_netmask(ip: str) -> Tuple[str, str]:
+    """ convert a 192.168.1.0/24 address to a 192.168.1.0 255.255.255.0 address"""
     net = ipaddress.IPv4Network(ip)
     return str(net.network_address), str(net.netmask)
 
@@ -103,6 +117,7 @@ def split_networks(ip: str, netmask: str = '255.255.255.255', partitions: int = 
     :param partitions: number of subnetworks to create
     :return: pairs of ip/subnet masks
     """
+    _validate_ip(ip)
     if ip_has_netmask(ip):
         ip, netmask = _seperate_ip_netmask(ip)
     # convert ip string to int so we can perform calculations
@@ -131,7 +146,5 @@ def split_networks(ip: str, netmask: str = '255.255.255.255', partitions: int = 
 def _send(sock: socket.socket, dest: str, packet: bytes):
     try:
         sock.sendto(packet, (dest, 0))
-    except PermissionError:
-        logger.warning("Permission error: Are you root? Are you trying to send a ping to an invalid address?")
     except OSError as e:
         logger.error(f"Error while sending to {dest}, probably some socket error: {packet}, {sock}: {e}")

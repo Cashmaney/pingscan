@@ -4,6 +4,7 @@ import time
 import multiprocessing
 import random
 import ipaddress
+import sys
 from collections import defaultdict
 from typing import Callable, Union, List, Dict, Tuple
 
@@ -22,7 +23,7 @@ sender_id = 1
 seq = 1
 
 
-def scan(ip: Union[List, str], network: str='255.255.255.255', *, timeout: float=default_timeout,
+def scan(ip: Union[List, str], network: str = '255.255.255.255', *, timeout: float = default_timeout,
          workers: int = default_processes, loop: asyncio.AbstractEventLoop = None) -> List[str]:
     """ main method for ping scanning IPv4 addresses
 
@@ -36,23 +37,38 @@ def scan(ip: Union[List, str], network: str='255.255.255.255', *, timeout: float
 
     :returns a list of all addresses that answered
     """
+
     tasks = _parse_input(ip, network, workers)
 
+    _check_working()
+
     # make sure tasks isn't some strange length for some reason
-    assert(workers == len(tasks))
+    assert workers == len(tasks)
 
     # we might be provided with an event loop
     if loop:
         result = AsyncPinger(loop=loop).ping(tasks, timeout, workers)
 
     else:
-        with get_eventloop() as loop:
-            result = AsyncPinger(loop=loop).ping(tasks, timeout, workers)
+        with get_eventloop() as event_loop:
+            result = AsyncPinger(loop=event_loop).ping(tasks, timeout, workers)
 
     return result
 
 
-def _parse_input(ip: Union[List, str], network: str='255.255.255.255', workers: int = default_processes):
+def _check_working():
+    try:
+        with get_socket() as ssock:
+            packet = build(1, 1)
+            _send(ssock, '127.0.0.1', packet)
+    except PermissionError as e:
+        sys.tracebacklimit = 0  # might not work for python 3.6.1
+        e.strerror = "Are you root, or do you have the required capabilities?"
+        e.__traceback__ = None
+        raise e
+
+
+def _parse_input(ip: Union[List, str], network: str = '255.255.255.255', workers: int = default_processes):
     """ convert the ip, network into a structure containing address/masks """
     # if this is list split it into worker tasks
     if isinstance(ip, list):
@@ -75,7 +91,7 @@ class AsyncPinger:
         self.done_sending = False
         self.loop = loop
         self.timeout = 0
-        self.logger = logging.getLogger(__class__.__name__)
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.queue = asyncio.Queue()
         self.addresses = []
         self.num_of_hosts = 0
@@ -135,7 +151,7 @@ class AsyncPinger:
 
     async def recv(self):
         """
-        Async recv function. Will try to receive until the sender method is done, then will receive until timeout is done.
+        Async recv function. Will try to receive until the sender method is done, then run until timeout is done.
         Note: we're trying to receive from a raw socket, so even if we use multiple listeners they will wake on the
         same packets
 
@@ -173,13 +189,13 @@ class AsyncPinger:
     def fetch_result(self) -> list:
         return [str(ipaddress.IPv4Address(addr)) for addr in self.addresses]
 
-    def process_packet(self, packet: memoryview, addr_handle_callback: Callable) -> None:
+    def process_packet(self, packet: memoryview, store_address_callback: Callable) -> None:
         """ Checks if a packet is ICMP reply, and records the sender address if it is. We use a callback here
-        for handling of ip address even though it is probably a tiny bit more overhead to make it easier to understand
+        for storing the ip address even though it is probably a tiny bit more overhead to make it easier to understand
         the flow of the code """
         if icmp.is_icmp_reply(packet) and icmp.msg_id_match(packet, self.id):
             resp_ip = icmp.src_ip_from_packet(packet)
-            addr_handle_callback(resp_ip)
+            store_address_callback(resp_ip)
 
     def _done_sending(self) -> bool:
         return self.send_done_count.value == self.worker_processes
@@ -192,10 +208,10 @@ class AsyncPinger:
             td = int((time.time() - self.start_time) * 1000)
 
             return td > self.timeout * 1000 * 99 / 100
+        return False
 
     def send(self, all_tasks: Dict[int, List[Tuple[str, str]]]):
-        # ip_list is in length workers, so it doesn't
-        # networks = split_networks(ip, network, self.worker_processes)
+        # note that len(all_tasks) == len(workers)
         for task in all_tasks.values():
             process = multiprocessing.Process(target=send_multiple,
                                               args=(self.send_done_count, task, self.id))

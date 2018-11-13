@@ -1,5 +1,6 @@
 import struct
 import collections
+# pylint: disable=no-name-in-module
 from pingscan.c_icmp import build as cbuild
 
 ICMPHeader = collections.namedtuple('ICMPHeader', 'type code checksum')
@@ -20,8 +21,8 @@ offset_src_ip = SRC_IP_OFFSET_v4
 
 def parse(packet: bytes) -> ICMPHeader:
     icmp_header = packet[ICMP_OFFSET_V4: ICMP_OFFSET_V4 + 8]
-    type, code, checksum, p_id, sequence = struct.unpack('bbHHh', icmp_header)
-    return ICMPHeader(type, code, checksum)
+    icmp_type, code, checksum, _, _ = struct.unpack('bbHHh', icmp_header)
+    return ICMPHeader(icmp_type, code, checksum)
 
 
 def build(seq=1, msg_id=1) -> bytes:
@@ -29,22 +30,14 @@ def build(seq=1, msg_id=1) -> bytes:
     return bytes(packet)
 
 
-def msg_id_match(packet: memoryview, msg_id=1, pos:int = 0, family: int=IPv4) -> int:
-    # if family == IPv4:
-    # print(f"{packet[msg_id_offset + pos]}")
-    # icmp type
+def msg_id_match(packet: memoryview, msg_id=1, pos: int = 0, family: int = IPv4) -> int:
     return int().from_bytes(packet[msg_id_offset + pos:msg_id_offset + 2 + pos], byteorder='little') == msg_id
 
 
-def src_ip_from_packet(packet: memoryview, pos:int = 0, family: int=IPv4) -> int:
-    # if family == IPv4:
-
+def src_ip_from_packet(packet: memoryview, pos: int = 0, family: int = IPv4) -> int:
     resp_ip = int().from_bytes(packet[offset_src_ip + pos:offset_src_ip + 4 + pos], byteorder='big')
     return resp_ip
 
 
-def is_icmp_reply(packet: memoryview, pos: int = 0, family: int=IPv4) -> bool:
-    # if family == IPv4:
-
-    # icmp type
+def is_icmp_reply(packet: memoryview, pos: int = 0, family: int = IPv4) -> bool:
     return packet[offset + pos] == ICMP_ECHO_REPLY
