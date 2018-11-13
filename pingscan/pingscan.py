@@ -12,7 +12,7 @@ from pingscan import icmp
 from pingscan.icmp import build
 from pingscan.utils import split_networks, _generate_ips, _send, host_count, split_addrs
 from pingscan.resources import get_eventloop, get_socket
-
+from pingscan.compat import loop_compat
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,10 @@ class AsyncPinger:
     """
 
     def __init__(self, loop: asyncio.AbstractEventLoop = asyncio.get_event_loop()) -> None:
+
+        if sys.version_info < (3, 7):
+            loop_compat(loop)
+
         self.done_sending = False
         self.loop = loop
         self.timeout = 0

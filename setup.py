@@ -32,7 +32,7 @@ setup(
     cmdclass            =cmd,
     ext_modules         =extensions,
     name                ='pingscan',
-    version             ='1.0.0',
+    version             ='1.0.2',
     description         ='A multiprocessing async ping scanner',
     long_description    =long_description,
     long_description_content_type="text/markdown",
